@@ -34,7 +34,9 @@ dependencies {
 	implementation("software.amazon.awssdk:sso")
 	implementation("software.amazon.awssdk:ssooidc")
 
+	//parsing
 	implementation 'org.jsoup:jsoup:1.16.1'
+	implementation 'org.threeten:threeten-extra:1.8.0'
 
 	compileOnly 'org.projectlombok:lombok:1.18.22'
 	annotationProcessor 'org.projectlombok:lombok:1.18.22'

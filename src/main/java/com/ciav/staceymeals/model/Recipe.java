@@ -14,5 +14,8 @@ public class Recipe {
 	private String title;
 	private List<String> ingredients;
 	private List<String> steps;
+	private String thumbnailUrl;
+	private String raw;
+
 
 }

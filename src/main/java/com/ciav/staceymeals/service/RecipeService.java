@@ -8,6 +8,8 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.stereotype.Service;
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Period;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -26,14 +28,20 @@ public class RecipeService {
 
             // 1) Try JSON-LD structured data
             Optional<Recipe> jsonLd = parseJsonLdRecipe(doc);
-            if (jsonLd.isPresent()) return jsonLd.get();
+            if (jsonLd.isPresent())
+            {
+                log.info("Extracted recipe using JSON-LD from URL: {}", url);
+                return jsonLd.get();
+            }
 
             // 2) Try microdata / itemprop attributes
             Optional<Recipe> microdata = parseMicrodataRecipe(doc);
-            if (microdata.isPresent()) return microdata.get();
+            if (microdata.isPresent()) {
+                log.info("Extracted recipe using Microdata from URL: {}", url);
+                return microdata.get();
+            }
 
-            // 3) Heuristic fallbacks: look for common classes/ids
-            return parseHeuristics(doc, url);
+            throw new IOException("No recipe data found in known formats.");
 
         } catch (IOException e) {
             log.error("Error fetching URL {}: {}", url, e.getMessage());
@@ -54,19 +62,24 @@ public class RecipeService {
             // A simple regex-based approach to find Recipe blocks to avoid adding a JSON library
             // Look for "@type"\s*:\s*"Recipe" and then try to extract name, recipeIngredient, recipeInstructions
             if (json.contains("\"@type\"") && json.toLowerCase().contains("recipe")) {
-                String title = extractJsonField(json, "name").orElse("");
+                String title = extractJsonField(json, "headline").orElse("");
                 List<String> ingredients = extractJsonArrayField(json, "recipeIngredient");
-                if (ingredients.isEmpty()) ingredients = extractJsonArrayField(json, "ingredients");
-                List<String> steps = extractJsonArrayField(json, "recipeInstructions");
-                // recipeInstructions is sometimes an array of objects with "text" fields
-                if (steps.isEmpty()) {
-                    // try to extract "text" occurrences inside recipeInstructions
-                    steps = extractJsonTextFromInstructions(json);
-                }
+                if (ingredients.isEmpty())
+                    ingredients = extractJsonArrayField(json, "ingredients");
+                // try to extract "text" occurrences inside recipeInstructions
+                List<String> steps = extractJsonTextFromInstructions(json);
+                String thumbnailUrl = extractJsonField(json, "thumbnailUrl").orElse("");
+
+                String prepTime = extractTime(extractJsonField(json, "prepTime").orElse(""));
+                String cookTime = extractTime(extractJsonField(json, "cookTime").orElse(""));
+                String totalTime = extractTime(extractJsonField(json, "totalTime").orElse(""));
+
                 return Optional.of(Recipe.builder()
                         .title(title == null || title.isEmpty() ? doc.title() : title)
                         .ingredients(ingredients)
                         .steps(steps)
+                        .thumbnailUrl(thumbnailUrl)
+                        .raw(json)
                         .build());
             }
         }
@@ -84,58 +97,10 @@ public class RecipeService {
                     .title((title == null || title.isEmpty()) ? doc.title() : title)
                     .ingredients(ingredients)
                     .steps(steps)
+                    .raw(doc.toString())
                     .build());
         }
         return Optional.empty();
-    }
-
-    private Recipe parseHeuristics(Document doc, String url) {
-        String title = doc.title();
-        List<String> ingredients = new ArrayList<>();
-        List<String> steps = new ArrayList<>();
-
-        // Common selectors
-        Elements ingEls = doc.select(".ingredients, .recipe-ingredients, #ingredients, [class*=ingredient]");
-        for (Element el : ingEls) {
-            // flatten lists and paragraphs
-            ingredients.addAll(elementsToTextList(el.select("li, p, div")));
-            if (ingredients.isEmpty()) ingredients.addAll(elementsToTextList(el.select("*")));
-        }
-
-        Elements stepEls = doc.select(".instructions, .directions, .method, .preparation, #instructions, [class*=instruction], [class*=direction], [class*=method]");
-        for (Element el : stepEls) {
-            steps.addAll(elementsToTextList(el.select("li, p, div")));
-            if (steps.isEmpty()) steps.addAll(elementsToTextList(el.select("*")));
-        }
-
-        // last resort: look for long paragraphs and split by sentence-ish boundaries
-        if (ingredients.isEmpty()) {
-            Elements paras = doc.select("p");
-            for (Element p : paras) {
-                if (p.text().toLowerCase().contains("cup") || p.text().toLowerCase().matches(".*\\d+.*")) {
-                    ingredients.add(p.text());
-                }
-            }
-        }
-
-        if (steps.isEmpty()) {
-            Elements paras = doc.select("p");
-            for (Element p : paras) {
-                String t = p.text();
-                if (t.toLowerCase().startsWith("preheat") || t.toLowerCase().contains("minutes") || t.toLowerCase().contains("cook")) {
-                    // split into sentences
-                    for (String s : t.split("(?<=[.!?])\\s+")) {
-                        steps.add(s.trim());
-                    }
-                }
-            }
-        }
-
-        return Recipe.builder()
-                .title(title == null || title.isEmpty() ? url : title)
-                .ingredients(ingredients)
-                .steps(steps)
-                .build();
     }
 
     // Helper utilities
@@ -184,5 +149,26 @@ public class RecipeService {
         Matcher m = p.matcher(json);
         while (m.find()) out.add(m.group(1));
         return out;
+    }
+
+    private String extractTime(String isoTime){
+        String time = "";
+        try {
+            time = Duration.parse(isoTime).toString();
+            return time;
+        } catch (Exception e){
+            log.warn("Failed to parse ISO 8601 time: {}", isoTime);
+        }
+
+        try {
+            time = Period.parse(isoTime).toString();
+            return time;
+        }
+        catch (Exception e){
+            log.warn("Failed to parse ISO 8601 period: {}", isoTime);
+        }
+
+        log.error("Could not parse time via duration or period parsing: {}", isoTime);
+        return "";
     }
 }
