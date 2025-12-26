@@ -23,9 +23,9 @@ public class RecipeController {
         this.recipeService = recipeService;
     }
 
-    @PostMapping("/fetch-recipe")
-    public ResponseEntity<Recipe> fetchRecipe(@RequestBody FetchRecipeRequest request) {
-        Recipe recipe = recipeService.extractRecipe(request.getUrl());
+    @PostMapping("/recipes/fetch-and-save")
+    public ResponseEntity<Recipe> fetchAndSaveRecipe(@RequestBody FetchRecipeRequest request) {
+        Recipe recipe = recipeService.fetchAndSaveRecipe(request);
         return ResponseEntity.ok(recipe);
     }
 }

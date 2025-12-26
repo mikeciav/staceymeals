@@ -1,24 +1,56 @@
 package com.ciav.staceymeals.service;
 
+import com.ciav.staceymeals.model.FetchRecipeRequest;
 import com.ciav.staceymeals.model.Recipe;
+import com.ciav.staceymeals.model.UserRecipeDbEntry;
+import jakarta.ws.rs.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.threeten.extra.AmountFormats;
+import org.threeten.extra.PeriodDuration;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+
 import java.io.IOException;
-import java.time.Duration;
-import java.time.Period;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
 @Slf4j
 public class RecipeService {
+
+    DynamoDbEnhancedClient db;
+
+    private final DynamoDbTable<UserRecipeDbEntry> recipeTable;
+
+    @Autowired
+    public RecipeService (DynamoDbEnhancedClient db) {
+        this.db = db;
+        recipeTable = db.table("stacey-meals", TableSchema.fromBean(UserRecipeDbEntry.class));
+    }
+
+    public Recipe fetchAndSaveRecipe(FetchRecipeRequest request) {
+        Recipe recipe = extractRecipe(request.getUrl());
+        saveRecipe(recipe, request);
+        return recipe;
+    }
+
+    public void saveRecipe(Recipe recipe, FetchRecipeRequest request) {
+        UserRecipeDbEntry entry = UserRecipeDbEntry.builder()
+                .userId(request.getUserId())
+                .recipeId(recipe.getRecipeId())
+                .recipe(recipe)
+                .build();
+        recipeTable.putItem(entry);
+    }
+
     public Recipe extractRecipe(String url) {
         try {
             Document doc = Jsoup.connect(url)
@@ -26,43 +58,26 @@ public class RecipeService {
                     .timeout(10_000)
                     .get();
 
-            // 1) Try JSON-LD structured data
-            Optional<Recipe> jsonLd = parseJsonLdRecipe(doc);
-            if (jsonLd.isPresent())
-            {
-                log.info("Extracted recipe using JSON-LD from URL: {}", url);
-                return jsonLd.get();
-            }
-
-            // 2) Try microdata / itemprop attributes
-            Optional<Recipe> microdata = parseMicrodataRecipe(doc);
-            if (microdata.isPresent()) {
-                log.info("Extracted recipe using Microdata from URL: {}", url);
-                return microdata.get();
-            }
-
-            throw new IOException("No recipe data found in known formats.");
+            //Try JSON-LD structured data
+            Recipe recipe = parseJsonLdRecipe(doc, url);
+            log.info("Extracted recipe using JSON-LD from URL: {}", url);
+            return recipe;
 
         } catch (IOException e) {
             log.error("Error fetching URL {}: {}", url, e.getMessage());
-            List<String> empty = List.of();
-            return Recipe.builder()
-                    .title("Failed to fetch: " + url)
-                    .ingredients(empty)
-                    .steps(empty)
-                    .build();
+            throw new RuntimeException(e);
         }
     }
 
-    // Parses application/ld+json blocks and looks for Recipe objects
-    private Optional<Recipe> parseJsonLdRecipe(Document doc) {
+    // Parses application/ld+JSON blocks and looks for Recipe objects
+    private Recipe parseJsonLdRecipe(Document doc, String sourceUrl) {
         Elements scripts = doc.select("script[type=application/ld+json]");
         for (Element script : scripts) {
             String json = script.html();
             // A simple regex-based approach to find Recipe blocks to avoid adding a JSON library
             // Look for "@type"\s*:\s*"Recipe" and then try to extract name, recipeIngredient, recipeInstructions
             if (json.contains("\"@type\"") && json.toLowerCase().contains("recipe")) {
-                String title = extractJsonField(json, "headline").orElse("");
+                //String title = extractJsonField(json, "headline").orElse("");
                 List<String> ingredients = extractJsonArrayField(json, "recipeIngredient");
                 if (ingredients.isEmpty())
                     ingredients = extractJsonArrayField(json, "ingredients");
@@ -73,50 +88,26 @@ public class RecipeService {
                 String prepTime = extractTime(extractJsonField(json, "prepTime").orElse(""));
                 String cookTime = extractTime(extractJsonField(json, "cookTime").orElse(""));
                 String totalTime = extractTime(extractJsonField(json, "totalTime").orElse(""));
+                String servings = extractJsonField(json, "recipeYield").orElse("0");
 
-                return Optional.of(Recipe.builder()
-                        .title(title == null || title.isEmpty() ? doc.title() : title)
+                return Recipe.builder()
+                        .recipeId(UUID.randomUUID())
+                        .sourceUrl(sourceUrl)
+                        .title(doc.title())
                         .ingredients(ingredients)
                         .steps(steps)
                         .thumbnailUrl(thumbnailUrl)
                         .raw(json)
-                        .build());
+                        .prepTime(prepTime)
+                        .cookTime(cookTime)
+                        .totalTime(totalTime)
+                        .servings(servings)
+                        .build();
             }
         }
-        return Optional.empty();
-    }
-
-    private Optional<Recipe> parseMicrodataRecipe(Document doc) {
-        // itemprop-based extraction
-        String title = firstText(doc.select("[itemprop=name]"));
-        List<String> ingredients = elementsToTextList(doc.select("[itemprop=recipeIngredient], [itemprop=ingredients]"));
-        List<String> steps = elementsToTextList(doc.select("[itemprop=recipeInstructions] [itemprop=text], [itemprop=recipeInstructions], [itemprop=step]"));
-
-        if (!ingredients.isEmpty() || !steps.isEmpty() || (title != null && !title.isEmpty())) {
-            return Optional.of(Recipe.builder()
-                    .title((title == null || title.isEmpty()) ? doc.title() : title)
-                    .ingredients(ingredients)
-                    .steps(steps)
-                    .raw(doc.toString())
-                    .build());
-        }
-        return Optional.empty();
-    }
-
-    // Helper utilities
-    private String firstText(Elements els) {
-        if (els == null || els.isEmpty()) return null;
-        return els.first().text();
-    }
-
-    private List<String> elementsToTextList(Elements els) {
-        List<String> out = new ArrayList<>();
-        if (els == null) return out;
-        for (Element el : els) {
-            String t = el.text().trim();
-            if (!t.isEmpty()) out.add(t);
-        }
-        return out;
+        String msg = "No recipe data found at the provided URL: " + sourceUrl;
+        log.error(msg);
+        throw new NotFoundException(msg);
     }
 
     // Very small JSON helpers using regex; not perfect but keeps deps minimal
@@ -154,21 +145,11 @@ public class RecipeService {
     private String extractTime(String isoTime){
         String time = "";
         try {
-            time = Duration.parse(isoTime).toString();
-            return time;
+            PeriodDuration pd = PeriodDuration.parse(isoTime);
+            time = AmountFormats.wordBased(pd.getPeriod(), pd.getDuration(), Locale.getDefault());
         } catch (Exception e){
-            log.warn("Failed to parse ISO 8601 time: {}", isoTime);
+            log.error("Could not parse time via duration or period parsing: {}", isoTime);
         }
-
-        try {
-            time = Period.parse(isoTime).toString();
-            return time;
-        }
-        catch (Exception e){
-            log.warn("Failed to parse ISO 8601 period: {}", isoTime);
-        }
-
-        log.error("Could not parse time via duration or period parsing: {}", isoTime);
-        return "";
+        return time;
     }
 }
