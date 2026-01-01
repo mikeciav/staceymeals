@@ -34,7 +34,15 @@ public class RecipeController {
 
     @GetMapping("users/{userId}/recipes")
     public ResponseEntity<List<Recipe>> getRecipes(@PathVariable("userId") String userId) {
-        List<Recipe> recipe = recipeService.getRecipesForUser(userId);
+        List<Recipe> recipe = recipeService.getRecipes(userId);
+        return ResponseEntity.ok(recipe);
+    }
+
+    @GetMapping("users/{userId}/recipes/{recipeId}")
+    public ResponseEntity<Recipe> getRecipe(
+            @PathVariable("userId") String userId,
+            @PathVariable("recipeId") String recipeId) {
+        Recipe recipe = recipeService.getRecipe(userId, recipeId);
         return ResponseEntity.ok(recipe);
     }
 

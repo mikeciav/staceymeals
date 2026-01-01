@@ -156,7 +156,7 @@ public class RecipeService {
         return time;
     }
 
-    public List<Recipe> getRecipesForUser(String userId) {
+    public List<Recipe> getRecipes(String userId) {
         List<Recipe> recipes = new ArrayList<>();
 
         Key partitionKey = Key.builder()
@@ -170,6 +170,22 @@ public class RecipeService {
         }
 
         return recipes;
+    }
+
+    public Recipe getRecipe(String userId, String recipeId) {
+        Key dbKey = Key.builder()
+                .partitionValue(userId)
+                .sortValue(recipeId)
+                .build();
+
+        UserRecipeDbEntry recipe = recipeTable.getItem(r -> r.key(dbKey));
+        if (recipe == null) {
+            String msg = "Recipe not found. Recipe ID: " + recipeId + ", User ID: " + userId;
+            log.error(msg);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, msg);
+        }
+
+        return recipe.getRecipe();
     }
 
     /**
@@ -206,7 +222,7 @@ public class RecipeService {
                         .build()
         ));
         if (response == null) {
-            String msg = "Recipe not found. Recipe ID: " + recipeId + ", User ID: "+ userId;
+            String msg = "Recipe not found. Recipe ID: " + recipeId + ", User ID: " + userId;
             log.error(msg);
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, msg);
         }
