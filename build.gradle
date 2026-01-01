@@ -1,0 +1,60 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.3.3'
+}
+
+group = 'com.ciav'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	sourceCompatibility = '17'
+	targetCompatibility = '17'
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation platform('org.springframework.boot:spring-boot-dependencies:3.5.9')
+
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+
+	//lambda stuff
+	implementation 'org.springframework.cloud:spring-cloud-function-web:4.3.1'
+	implementation 'org.springframework.cloud:spring-cloud-function-adapter-aws:4.3.1'
+	implementation 'com.amazonaws.serverless:aws-serverless-java-container-springboot3:2.1.5'
+	implementation 'com.amazonaws:aws-lambda-java-events:3.11.3'
+	implementation 'com.amazonaws:aws-lambda-java-core:1.2.3'
+
+	//aws
+	implementation(platform("software.amazon.awssdk:bom:2.21.1"))
+	implementation("software.amazon.awssdk:dynamodb")
+	implementation("software.amazon.awssdk:dynamodb-enhanced")
+	implementation("software.amazon.awssdk:sso")
+	implementation("software.amazon.awssdk:ssooidc")
+
+	//parsing
+	implementation 'org.jsoup:jsoup:1.16.1'
+	implementation 'org.threeten:threeten-extra:1.8.0'
+
+	compileOnly 'org.projectlombok:lombok:1.18.22'
+	annotationProcessor 'org.projectlombok:lombok:1.18.22'
+	testCompileOnly 'org.projectlombok:lombok:1.18.22'
+	testAnnotationProcessor 'org.projectlombok:lombok:1.18.22'
+
+	testImplementation platform('org.springframework.boot:spring-boot-dependencies:3.5.9')
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+	useJUnitPlatform()
+}
+
+tasks.register('buildZip', Zip) {
+	into('lib') {
+		from(jar)
+		from(configurations.runtimeClasspath)
+	}
+}
