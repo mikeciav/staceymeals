@@ -3,19 +3,22 @@ package com.ciav.staceymeals.service;
 import com.ciav.staceymeals.model.FetchRecipeRequest;
 import com.ciav.staceymeals.model.Recipe;
 import com.ciav.staceymeals.model.UserRecipeDbEntry;
-import jakarta.ws.rs.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.threeten.extra.AmountFormats;
 import org.threeten.extra.PeriodDuration;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.Key;
 import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.enhanced.dynamodb.model.QueryConditional;
 
 import java.io.IOException;
 import java.util.*;
@@ -65,7 +68,7 @@ public class RecipeService {
 
         } catch (IOException e) {
             log.error("Error fetching URL {}: {}", url, e.getMessage());
-            throw new RuntimeException(e);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }
 
@@ -107,7 +110,7 @@ public class RecipeService {
         }
         String msg = "No recipe data found at the provided URL: " + sourceUrl;
         log.error(msg);
-        throw new NotFoundException(msg);
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, msg);
     }
 
     // Very small JSON helpers using regex; not perfect but keeps deps minimal
@@ -151,5 +154,61 @@ public class RecipeService {
             log.error("Could not parse time via duration or period parsing: {}", isoTime);
         }
         return time;
+    }
+
+    public List<Recipe> getRecipesForUser(String userId) {
+        List<Recipe> recipes = new ArrayList<>();
+
+        Key partitionKey = Key.builder()
+                .partitionValue(userId)
+                .build();
+
+        QueryConditional queryConditional = QueryConditional.keyEqualTo(partitionKey);
+
+        for (UserRecipeDbEntry entry : recipeTable.query(r -> r.queryConditional(queryConditional)).items()) {
+            recipes.add(entry.getRecipe());
+        }
+
+        return recipes;
+    }
+
+    /**
+     * Upserts a user's recipe.
+     * This lets a user update a recipe that wasn't parsed 100% correctly or modify it to their personal preferences.
+     * @param userId
+     * @param recipeId
+     * @param updatedRecipe
+     * @return The updated Recipe
+     */
+    //TODO: Check to see if user exists first
+    public Recipe updateRecipe(String userId, String recipeId, Recipe updatedRecipe) {
+        UserRecipeDbEntry response = recipeTable.updateItem(r -> r.item(
+                UserRecipeDbEntry.builder()
+                        .userId(userId)
+                        .recipeId(UUID.fromString(recipeId))
+                        .recipe(updatedRecipe)
+                        .build()
+        ));
+        if (response == null) {
+            String msg = "Update failed for recipe: " + recipeId + " and user: "+ userId;
+            log.error(msg);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+        }
+
+        return response.getRecipe();
+    }
+
+    public void deleteRecipe(String userId, String recipeId) {
+        UserRecipeDbEntry response = recipeTable.deleteItem(r -> r.key(
+                Key.builder()
+                        .partitionValue(userId)
+                        .sortValue(recipeId)
+                        .build()
+        ));
+        if (response == null) {
+            String msg = "Recipe not found. Recipe ID: " + recipeId + ", User ID: "+ userId;
+            log.error(msg);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, msg);
+        }
     }
 }
