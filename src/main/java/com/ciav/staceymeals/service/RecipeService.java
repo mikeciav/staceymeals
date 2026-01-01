@@ -2,7 +2,7 @@ package com.ciav.staceymeals.service;
 
 import com.ciav.staceymeals.model.FetchRecipeRequest;
 import com.ciav.staceymeals.model.Recipe;
-import com.ciav.staceymeals.model.UserRecipeDbEntry;
+import com.ciav.staceymeals.model.UserRecipeDynamoDbRecord;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -31,12 +31,12 @@ public class RecipeService {
 
     DynamoDbEnhancedClient db;
 
-    private final DynamoDbTable<UserRecipeDbEntry> recipeTable;
+    private final DynamoDbTable<UserRecipeDynamoDbRecord> recipeTable;
 
     @Autowired
     public RecipeService (DynamoDbEnhancedClient db) {
         this.db = db;
-        recipeTable = db.table("stacey-meals", TableSchema.fromBean(UserRecipeDbEntry.class));
+        recipeTable = db.table("stacey-meals", TableSchema.fromBean(UserRecipeDynamoDbRecord.class));
     }
 
     public Recipe fetchAndSaveRecipe(FetchRecipeRequest request) {
@@ -46,9 +46,9 @@ public class RecipeService {
     }
 
     public void saveRecipe(Recipe recipe, FetchRecipeRequest request) {
-        UserRecipeDbEntry entry = UserRecipeDbEntry.builder()
+        UserRecipeDynamoDbRecord entry = UserRecipeDynamoDbRecord.builder()
                 .userId(request.getUserId())
-                .recipeId(recipe.getRecipeId())
+                .sortKey("recipe:" + recipe.getRecipeId())
                 .recipe(recipe)
                 .build();
         recipeTable.putItem(entry);
@@ -165,7 +165,7 @@ public class RecipeService {
 
         QueryConditional queryConditional = QueryConditional.keyEqualTo(partitionKey);
 
-        for (UserRecipeDbEntry entry : recipeTable.query(r -> r.queryConditional(queryConditional)).items()) {
+        for (UserRecipeDynamoDbRecord entry : recipeTable.query(r -> r.queryConditional(queryConditional)).items()) {
             recipes.add(entry.getRecipe());
         }
 
@@ -175,10 +175,10 @@ public class RecipeService {
     public Recipe getRecipe(String userId, String recipeId) {
         Key dbKey = Key.builder()
                 .partitionValue(userId)
-                .sortValue(recipeId)
+                .sortValue("recipe:"+recipeId)
                 .build();
 
-        UserRecipeDbEntry recipe = recipeTable.getItem(r -> r.key(dbKey));
+        UserRecipeDynamoDbRecord recipe = recipeTable.getItem(r -> r.key(dbKey));
         if (recipe == null) {
             String msg = "Recipe not found. Recipe ID: " + recipeId + ", User ID: " + userId;
             log.error(msg);
@@ -198,10 +198,10 @@ public class RecipeService {
      */
     //TODO: Check to see if user exists first
     public Recipe updateRecipe(String userId, String recipeId, Recipe updatedRecipe) {
-        UserRecipeDbEntry response = recipeTable.updateItem(r -> r.item(
-                UserRecipeDbEntry.builder()
+        UserRecipeDynamoDbRecord response = recipeTable.updateItem(r -> r.item(
+                UserRecipeDynamoDbRecord.builder()
                         .userId(userId)
-                        .recipeId(UUID.fromString(recipeId))
+                        .sortKey("recipe:" + UUID.fromString(recipeId))
                         .recipe(updatedRecipe)
                         .build()
         ));
@@ -215,7 +215,7 @@ public class RecipeService {
     }
 
     public void deleteRecipe(String userId, String recipeId) {
-        UserRecipeDbEntry response = recipeTable.deleteItem(r -> r.key(
+        UserRecipeDynamoDbRecord response = recipeTable.deleteItem(r -> r.key(
                 Key.builder()
                         .partitionValue(userId)
                         .sortValue(recipeId)
