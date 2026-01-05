@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Table;
 
 import java.util.ArrayList;
@@ -17,23 +18,14 @@ import java.util.UUID;
 @Slf4j
 @AllArgsConstructor
 @NoArgsConstructor
-@Table("recipes")
-public class Recipe {
+@Table(name = "categories")
+public class Category {
 	@Id
 	private UUID id;
 	private UUID userId;
-	private String sourceUrl;
-	private String title;
-	private List<String> ingredients;
-	private List<String> steps;
-	private String thumbnailUrl;
-	private String prepTime;
-	private String cookTime;
-	private String totalTime;
-	private String servings;
-	private String raw;
-	private int rating;
-
+	private String name;
+	private UUID parentCategoryId;
 	@Builder.Default
-	private List<Category> categories = new ArrayList<>();
+	@Transient
+	private List<Category> subCategories = new ArrayList<>();
 }
